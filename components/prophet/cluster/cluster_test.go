@@ -782,7 +782,7 @@ func newTestCluster(opt *config.PersistOptions) *testCluster {
 
 func newTestRaftCluster(opt *config.PersistOptions, storage storage.Storage, basicCluster *core.BasicCluster) *RaftCluster {
 	rc := &RaftCluster{ctx: context.TODO(), logger: log.Adjust(nil)}
-	rc.InitCluster(opt, storage, basicCluster)
+	rc.InitClusterLocked(opt, storage, basicCluster)
 	basicCluster.ScheduleGroupKeys[""] = struct{}{}
 	return rc
 }

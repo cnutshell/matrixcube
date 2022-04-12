@@ -12,6 +12,7 @@ import (
 	"github.com/fagongzi/util/protoc"
 	"github.com/matrixorigin/matrixcube/components/log"
 	"github.com/matrixorigin/matrixcube/components/prophet"
+	"github.com/matrixorigin/matrixcube/components/prophet/cluster"
 	pconfig "github.com/matrixorigin/matrixcube/components/prophet/config"
 	"github.com/matrixorigin/matrixcube/components/prophet/storage"
 	"github.com/matrixorigin/matrixcube/components/prophet/util"
@@ -23,8 +24,7 @@ import (
 )
 
 var (
-	errNoIdleShard   = errors.New("no idle shard")
-	batchCreateCount = 4
+	errNoIdleShard = errors.New("no idle shard")
 )
 
 // ShardsPool is a shards pool, it will always create shards until the number of available shards reaches the
@@ -336,7 +336,7 @@ func (dsp *dynamicShardsPool) maybeCreate(store storage.JobStorage) {
 		changed := false
 		for g, p := range modified.Pools {
 			if p.Seq == 0 ||
-				(int(p.Seq-p.AllocatedOffset) < int(p.Capacity) && len(creates) < batchCreateCount) {
+				(int(p.Seq-p.AllocatedOffset) < int(p.Capacity) && len(creates) < cluster.BatchCreateCount) {
 				p.Seq++
 				tmp := dsp.factory(g,
 					addPrefix(p.RangePrefix, p.Seq),

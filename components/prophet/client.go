@@ -55,31 +55,31 @@ type Client interface {
 	AskBatchSplit(res metapb.Shard, count uint32) ([]rpcpb.SplitID, error)
 	NewWatcher(flag uint32) (EventWatcher, error)
 	GetShardHeartbeatRspNotifier() (chan rpcpb.ShardHeartbeatRsp, error)
-	// AsyncAddShards add resources asynchronously. The operation add new resources meta on the
+	// AsyncAddShards add shards asynchronously. The operation add new shards meta on the
 	// prophet leader cache and embed etcd. And porphet leader has a background goroutine to notify
-	// all related containers to create resource replica peer at local.
-	AsyncAddShards(resources ...metapb.Shard) error
+	// all related stores to create shard replica peer at local.
+	AsyncAddShards(shards ...metapb.Shard) error
 	// AsyncAddShardsWithLeastPeers same of `AsyncAddShards`, but if the number of peers successfully
 	// allocated exceed the `leastPeers`, no error will be returned.
-	AsyncAddShardsWithLeastPeers(resources []metapb.Shard, leastPeers []int) error
-	// AsyncRemoveShards remove resource asynchronously. The operation only update the resource state
-	// on the prophet leader cache and embed etcd. The resource actual destroy triggered in three ways as below:
-	// a) Each cube node starts a backgroud goroutine to check all the resources state, and resource will
+	AsyncAddShardsWithLeastPeers(shards []metapb.Shard, leastPeers []int) error
+	// AsyncRemoveShards remove shards asynchronously. The operation only update the shard state
+	// on the prophet leader cache and embed etcd. The shard actual destroy triggered in three ways as below:
+	// a) Each cube node starts a backgroud goroutine to check all the shards state, and shard will
 	//    destroyed if encounter removed state.
 	// b) Shard heartbeat received a DestroyDirectly schedule command.
-	// c) If received a resource removed event.
+	// c) If received a shard removed event.
 	AsyncRemoveShards(ids ...uint64) error
-	// CheckShardState returns resources state
-	CheckShardState(resources *roaring64.Bitmap) (rpcpb.CheckShardStateRsp, error)
+	// CheckShardState returns shards state
+	CheckShardState(shards *roaring64.Bitmap) (rpcpb.CheckShardStateRsp, error)
 
 	// PutPlacementRule put placement rule
 	PutPlacementRule(rule rpcpb.PlacementRule) error
-	// GetAppliedRules returns applied rules of the resource
+	// GetAppliedRules returns applied rules of the shard
 	GetAppliedRules(id uint64) ([]rpcpb.PlacementRule, error)
 
 	// AddSchedulingRule Add scheduling rules, scheduling rules are effective for all schedulers.
-	// The scheduling rules are based on the Label of the Shard to group all resources and do
-	// scheduling independently for these grouped resources.`ruleName` is unique within the group.
+	// The scheduling rules are based on the Label of the Shard to group all shards and do
+	// scheduling independently for these grouped shards.`ruleName` is unique within the group.
 	AddSchedulingRule(groupID uint64, ruleName string, labelName string) error
 	// GetSchedulingRules get all schedule group rules
 	GetSchedulingRules() ([]metapb.ScheduleGroupRule, error)
@@ -99,12 +99,12 @@ type asyncClient struct {
 	id          uint64
 	leaderConn  goetty.IOSession
 
-	resetReadC            chan string
-	resetLeaderConnC      chan struct{}
-	writeC                chan *ctx
-	resourceHeartbeatRspC chan rpcpb.ShardHeartbeatRsp
-	stopper               *stop.Stopper
-	closeOnce             sync.Once
+	resetReadC         chan string
+	resetLeaderConnC   chan struct{}
+	writeC             chan *ctx
+	shardHeartbeatRspC chan rpcpb.ShardHeartbeatRsp
+	stopper            *stop.Stopper
+	closeOnce          sync.Once
 
 	mu struct {
 		sync.RWMutex
@@ -120,11 +120,11 @@ type asyncClient struct {
 // NewClient create a prophet client
 func NewClient(opts ...Option) Client {
 	c := &asyncClient{
-		opts:                  &options{},
-		resetReadC:            make(chan string, 1),
-		resetLeaderConnC:      make(chan struct{}),
-		writeC:                make(chan *ctx, 128),
-		resourceHeartbeatRspC: make(chan rpcpb.ShardHeartbeatRsp, 128),
+		opts:               &options{},
+		resetReadC:         make(chan string, 1),
+		resetLeaderConnC:   make(chan struct{}),
+		writeC:             make(chan *ctx, 128),
+		shardHeartbeatRspC: make(chan rpcpb.ShardHeartbeatRsp, 128),
 	}
 
 	for _, opt := range opts {
@@ -158,7 +158,7 @@ func (c *asyncClient) Close() error {
 
 func (c *asyncClient) doClose() {
 	c.closeOnce.Do(func() {
-		close(c.resourceHeartbeatRspC)
+		close(c.shardHeartbeatRspC)
 		close(c.resetLeaderConnC)
 		close(c.resetReadC)
 		close(c.writeC)
@@ -358,7 +358,7 @@ func (c *asyncClient) GetShardHeartbeatRspNotifier() (chan rpcpb.ShardHeartbeatR
 		return nil, ErrClosed
 	}
 
-	return c.resourceHeartbeatRspC, nil
+	return c.shardHeartbeatRspC, nil
 }
 
 func (c *asyncClient) AsyncAddShards(shards ...metapb.Shard) error {
@@ -406,14 +406,14 @@ func (c *asyncClient) AsyncRemoveShards(ids ...uint64) error {
 	return nil
 }
 
-func (c *asyncClient) CheckShardState(resources *roaring64.Bitmap) (rpcpb.CheckShardStateRsp, error) {
+func (c *asyncClient) CheckShardState(shards *roaring64.Bitmap) (rpcpb.CheckShardStateRsp, error) {
 	if !c.running() {
 		return rpcpb.CheckShardStateRsp{}, ErrClosed
 	}
 
 	req := &rpcpb.ProphetRequest{}
 	req.Type = rpcpb.TypeCheckShardStateReq
-	req.CheckShardState.IDs = util.MustMarshalBM64(resources)
+	req.CheckShardState.IDs = util.MustMarshalBM64(shards)
 
 	rsp, err := c.syncDo(req)
 	if err != nil {
@@ -747,9 +747,9 @@ func (c *asyncClient) maybeAddShardHeartbeatResp(resp *rpcpb.ProphetResponse) bo
 	if resp.Type == rpcpb.TypeShardHeartbeatRsp &&
 		resp.Error == "" &&
 		resp.ShardHeartbeat.ShardID > 0 {
-		c.opts.logger.Debug("resource heartbeat response added",
-			zap.Uint64("resource", resp.ShardHeartbeat.ShardID))
-		c.resourceHeartbeatRspC <- resp.ShardHeartbeat
+		c.opts.logger.Debug("shard heartbeat response added",
+			zap.Uint64("shard", resp.ShardHeartbeat.ShardID))
+		c.shardHeartbeatRspC <- resp.ShardHeartbeat
 		return true
 	}
 	return false

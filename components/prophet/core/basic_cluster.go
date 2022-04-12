@@ -80,11 +80,11 @@ func (bc *BasicCluster) AddRemovedShards(ids ...uint64) {
 }
 
 // AddWaitingCreateShards add waiting create shards
-func (bc *BasicCluster) AddWaitingCreateShards(resources ...metapb.Shard) {
+func (bc *BasicCluster) AddWaitingCreateShards(shards ...metapb.Shard) {
 	bc.Lock()
 	defer bc.Unlock()
-	for _, res := range resources {
-		bc.WaitingCreateShards[res.GetID()] = res
+	for _, shard := range shards {
+		bc.WaitingCreateShards[shard.GetID()] = shard
 	}
 }
 

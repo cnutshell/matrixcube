@@ -26,13 +26,17 @@ import (
 
 	"github.com/gogo/protobuf/proto"
 	"github.com/matrixorigin/matrixcube/components/prophet/metadata"
+	"github.com/matrixorigin/matrixcube/components/prophet/util"
 	"github.com/matrixorigin/matrixcube/pb/metapb"
 	"github.com/matrixorigin/matrixcube/pb/rpcpb"
 )
 
 // errShardIsStale is error info for shard is stale.
 var errShardIsStale = func(res metapb.Shard, origin metapb.Shard) error {
-	return fmt.Errorf("shard is stale: shard %v, origin %v", res, origin)
+	return util.WrappedError(
+		util.ErrStaleShard,
+		fmt.Sprintf("shard %v, origin %v", res, origin),
+	)
 }
 
 // CachedShard shard runtime info cached in the cache

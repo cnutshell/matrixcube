@@ -29,6 +29,11 @@ import (
 	"go.uber.org/zap"
 )
 
+const (
+	BatchCreateCount = 4
+	BatchRemoveCount = 4
+)
+
 // HandleShardHeartbeat processes CachedShard reports from client.
 func (c *RaftCluster) HandleShardHeartbeat(res *core.CachedShard) error {
 	c.RLock()
@@ -51,6 +56,11 @@ func (c *RaftCluster) HandleShardHeartbeat(res *core.CachedShard) error {
 func (c *RaftCluster) HandleCreateDestroying(req rpcpb.CreateDestroyingReq) (metapb.ShardState, error) {
 	c.Lock()
 	defer c.Unlock()
+
+	// check RaftCluster running or not
+	if !c.running {
+		return metapb.ShardState_Destroying, util.ErrNotLeader
+	}
 
 	if c.core.AlreadyRemoved(req.ID) {
 		return metapb.ShardState_Destroyed, nil
@@ -85,6 +95,11 @@ func (c *RaftCluster) HandleReportDestroyed(req rpcpb.ReportDestroyedReq) (metap
 	c.Lock()
 	defer c.Unlock()
 
+	// check RaftCluster running or not
+	if !c.running {
+		return metapb.ShardState_Destroying, util.ErrNotLeader
+	}
+
 	if c.core.AlreadyRemoved(req.ID) {
 		return metapb.ShardState_Destroyed, nil
 	}
@@ -95,7 +110,7 @@ func (c *RaftCluster) HandleReportDestroyed(req rpcpb.ReportDestroyedReq) (metap
 	}
 	if status == nil {
 		c.logger.Fatal("BUG: missing destroying status",
-			zap.Uint64("resource", req.ID))
+			zap.Uint64("shard", req.ID))
 		return metapb.ShardState_Destroying, nil
 	}
 
@@ -124,27 +139,36 @@ func (c *RaftCluster) HandleReportDestroyed(req rpcpb.ReportDestroyedReq) (metap
 	return status.State, nil
 }
 
-// HandleGetDestroying returns resource destroying status
+// HandleGetDestroying returns shard destroying status
 func (c *RaftCluster) HandleGetDestroying(req rpcpb.GetDestroyingReq) (*metapb.DestroyingStatus, error) {
 	c.RLock()
 	defer c.RUnlock()
 
+	// check RaftCluster running or not
+	if !c.running {
+		return nil, util.ErrNotLeader
+	}
 	return c.getDestroyingStatusLocked(req.ID)
 }
 
-// ValidRequestShard is used to decide if the resource is valid.
+// ValidRequestShard is used to decide if the shard is valid.
 func (c *RaftCluster) ValidRequestShard(reqShard *metapb.Shard) error {
 	startKey, _ := reqShard.GetRange()
 	res := c.GetShardByKey(reqShard.GetGroup(), startKey)
 	if res == nil {
-		return fmt.Errorf("resource not found, request resource: %v", reqShard)
+		return util.WrappedError(
+			util.ErrShardNotFound, fmt.Sprintf("request shard: %v", reqShard),
+		)
 	}
-	// If the request epoch is less than current resource epoch, then returns an error.
+	// If the request epoch is less than current shard epoch, then returns an error.
 	reqShardEpoch := reqShard.GetEpoch()
 	resourceEpoch := res.Meta.GetEpoch()
 	if reqShardEpoch.GetGeneration() < resourceEpoch.GetGeneration() ||
 		reqShardEpoch.GetConfigVer() < resourceEpoch.GetConfigVer() {
-		return fmt.Errorf("invalid resource epoch, request: %v, current: %v", reqShardEpoch, resourceEpoch)
+		return util.WrappedError(
+			util.ErrInvalidShardEpoch,
+			fmt.Sprintf("request: %v, current: %v", reqShardEpoch, resourceEpoch),
+		)
 	}
 	return nil
 }
@@ -184,28 +208,30 @@ func (c *RaftCluster) HandleAskBatchSplit(request *rpcpb.ProphetRequest) (*rpcpb
 			NewReplicaIDs: peerIDs,
 		})
 
-		c.logger.Info("ids allocated for resource split",
-			zap.Uint64("resource", newShardID),
+		c.logger.Info("ids allocated for shard split",
+			zap.Uint64("shard", newShardID),
 			zap.Any("peer-ids", peerIDs))
 	}
 
 	recordShards = append(recordShards, reqShard.GetID())
-	// Disable merge the resources in a period of time.
+	// Disable merge the shards in a period of time.
 	c.GetMergeChecker().RecordShardSplit(recordShards)
 
-	// If resource splits during the scheduling process, resources with abnormal
-	// status may be left, and these resources need to be checked with higher
+	// If shard splits during the scheduling process, shards with abnormal
+	// status may be left, and these shards need to be checked with higher
 	// priority.
 	c.AddSuspectShards(recordShards...)
 
 	return &rpcpb.AskBatchSplitRsp{SplitIDs: splitIDs}, nil
 }
 
-// HandleCreateShards handle create resources. It will create resources with full replica peers.
+// HandleCreateShards handle create shards. It will create shards with full replica peers.
 func (c *RaftCluster) HandleCreateShards(request *rpcpb.ProphetRequest) (*rpcpb.CreateShardsRsp, error) {
-	if len(request.CreateShards.Shards) > 4 {
-		return nil, fmt.Errorf("exceed the maximum batch size of create resources, max is %d current %d",
-			4, len(request.CreateShards.Shards))
+	if len(request.CreateShards.Shards) > BatchCreateCount {
+		return nil, util.WrappedError(
+			util.ErrBatchSizeExceeded,
+			fmt.Sprintf("max is %d current %d", BatchCreateCount, len(request.CreateShards.Shards)),
+		)
 	}
 
 	if request.CreateShards.LeastReplicas == nil {
@@ -214,6 +240,11 @@ func (c *RaftCluster) HandleCreateShards(request *rpcpb.ProphetRequest) (*rpcpb.
 
 	c.RLock()
 	defer c.RUnlock()
+
+	// check RaftCluster running or not
+	if !c.running {
+		return nil, util.ErrNotLeader
+	}
 
 	var shardsMeta []metapb.Shard
 	var createdShards []metapb.Shard
@@ -225,7 +256,10 @@ func (c *RaftCluster) HandleCreateShards(request *rpcpb.ProphetRequest) (*rpcpb.
 			return nil, err
 		}
 		if len(res.GetReplicas()) > 0 {
-			return nil, fmt.Errorf("cann't assign peers in create resources")
+			return nil, util.WrappedError(
+				util.ErrInvalidRequest,
+				fmt.Sprintf("cann't assign peers when create shards"),
+			)
 		}
 
 		// check recreate
@@ -233,7 +267,7 @@ func (c *RaftCluster) HandleCreateShards(request *rpcpb.ProphetRequest) (*rpcpb.
 		for _, cr := range c.core.GetShards() {
 			if cr.Meta.GetUnique() == res.GetUnique() {
 				create = false
-				c.logger.Info("resource already created",
+				c.logger.Info("shard already created",
 					zap.String("unique", res.GetUnique()))
 				break
 			}
@@ -242,7 +276,7 @@ func (c *RaftCluster) HandleCreateShards(request *rpcpb.ProphetRequest) (*rpcpb.
 			c.core.ForeachWaitingCreateShards(func(wres metapb.Shard) {
 				if wres.GetUnique() == res.GetUnique() {
 					create = false
-					c.logger.Info("resource already in waitting create queue",
+					c.logger.Info("shard already in waitting create queue",
 						zap.String("unique", res.GetUnique()))
 				}
 			})
@@ -285,8 +319,8 @@ func (c *RaftCluster) HandleCreateShards(request *rpcpb.ProphetRequest) (*rpcpb.
 			cachedShard.Meta.GetReplicas()[idx].InitialMember = true
 		}
 
-		c.logger.Info("resource created",
-			zap.Uint64("resource", cachedShard.Meta.GetID()),
+		c.logger.Info("shard created",
+			zap.Uint64("shard", cachedShard.Meta.GetID()),
 			zap.Any("peers", cachedShard.Meta.GetReplicas()))
 
 		createdShards = append(createdShards, cachedShard.Meta)
@@ -302,15 +336,22 @@ func (c *RaftCluster) HandleCreateShards(request *rpcpb.ProphetRequest) (*rpcpb.
 	return &rpcpb.CreateShardsRsp{}, nil
 }
 
-// HandleRemoveShards handle remove resources
+// HandleRemoveShards handle remove shards
 func (c *RaftCluster) HandleRemoveShards(request *rpcpb.ProphetRequest) (*rpcpb.RemoveShardsRsp, error) {
-	if len(request.RemoveShards.IDs) > 4 {
-		return nil, fmt.Errorf("exceed the maximum batch size of remove resources, max is %d current %d",
-			4, len(request.RemoveShards.IDs))
+	if len(request.RemoveShards.IDs) > BatchRemoveCount {
+		return nil, util.WrappedError(
+			util.ErrBatchSizeExceeded,
+			fmt.Sprintf("max is %d current %d", BatchRemoveCount, len(request.RemoveShards.IDs)),
+		)
 	}
 
 	c.RLock()
 	defer c.RUnlock()
+
+	// check RaftCluster running or not
+	if !c.running {
+		return nil, util.ErrNotLeader
+	}
 
 	var targets []metapb.Shard
 	var origin []metapb.Shard
@@ -321,7 +362,9 @@ func (c *RaftCluster) HandleRemoveShards(request *rpcpb.ProphetRequest) (*rpcpb.
 
 		v := c.core.GetShard(id)
 		if v == nil {
-			return nil, fmt.Errorf("resource %d not found in prophet", id)
+			return nil, util.WrappedError(
+				util.ErrShardNotFound, fmt.Sprintf("shard id %d", id),
+			)
 		}
 
 		res := v.Meta // use cloned value
@@ -341,10 +384,15 @@ func (c *RaftCluster) HandleRemoveShards(request *rpcpb.ProphetRequest) (*rpcpb.
 	return &rpcpb.RemoveShardsRsp{}, nil
 }
 
-// HandleCheckShardState handle check resource state
+// HandleCheckShardState handle check shard state
 func (c *RaftCluster) HandleCheckShardState(request *rpcpb.ProphetRequest) (*rpcpb.CheckShardStateRsp, error) {
 	c.RLock()
 	defer c.RUnlock()
+
+	// check RaftCluster running or not
+	if !c.running {
+		return nil, util.ErrNotLeader
+	}
 
 	destroyed, destroying := c.core.GetDestroyShards(util.MustUnmarshalBM64(request.CheckShardState.IDs))
 	return &rpcpb.CheckShardStateRsp{
@@ -362,7 +410,10 @@ func (c *RaftCluster) HandlePutPlacementRule(request *rpcpb.ProphetRequest) erro
 func (c *RaftCluster) HandleAppliedRules(request *rpcpb.ProphetRequest) (*rpcpb.GetAppliedRulesRsp, error) {
 	res := c.GetShard(request.GetAppliedRules.ShardID)
 	if res == nil {
-		return nil, fmt.Errorf("resource %d not found", request.GetAppliedRules.ShardID)
+		return nil, util.WrappedError(
+			util.ErrShardNotFound,
+			fmt.Sprintf("shard id: %d", request.GetAppliedRules.ShardID),
+		)
 	}
 
 	rules := c.GetRuleManager().GetRulesForApplyShard(res)
@@ -415,11 +466,9 @@ func (c *RaftCluster) HandleGetScheduleGroupRule(request *rpcpb.ProphetRequest) 
 }
 
 func (c *RaftCluster) triggerNotifyCreateShards() {
-	if c.createShardC != nil {
-		select {
-		case c.createShardC <- struct{}{}:
-		default:
-		}
+	select {
+	case c.createShardC <- struct{}{}:
+	default:
 	}
 }
 

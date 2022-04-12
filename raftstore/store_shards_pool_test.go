@@ -20,6 +20,7 @@ import (
 
 	"github.com/fagongzi/util/protoc"
 	"github.com/golang/mock/gomock"
+	"github.com/matrixorigin/matrixcube/components/prophet/cluster"
 	"github.com/matrixorigin/matrixcube/components/prophet/core"
 	"github.com/matrixorigin/matrixcube/components/prophet/mock/mockclient"
 	"github.com/matrixorigin/matrixcube/components/prophet/mock/mockjob"
@@ -205,7 +206,7 @@ func TestMaybeCreate(t *testing.T) {
 	p.mu.state = 1
 	p.mu.createC = make(chan struct{}, 10)
 	p.mu.pools = metapb.ShardsPool{Pools: make(map[uint64]*metapb.ShardPool)}
-	p.mu.pools.Pools[0] = &metapb.ShardPool{Capacity: uint64(batchCreateCount)}
+	p.mu.pools.Pools[0] = &metapb.ShardPool{Capacity: uint64(cluster.BatchCreateCount)}
 
 	// pd return error
 	ok = false
@@ -216,9 +217,9 @@ func TestMaybeCreate(t *testing.T) {
 
 	ok = true
 	p.maybeCreate(ss)
-	assert.Equal(t, c, batchCreateCount)
+	assert.Equal(t, c, cluster.BatchCreateCount)
 	assert.Equal(t, 1, len(p.mu.createC))
-	assert.Equal(t, uint64(batchCreateCount), p.mu.pools.Pools[0].Seq)
+	assert.Equal(t, uint64(cluster.BatchCreateCount), p.mu.pools.Pools[0].Seq)
 	v, err := ss.GetJobData(p.job.Type)
 	assert.NoError(t, err)
 	assert.Equal(t, protoc.MustMarshal(&p.mu.pools), v)

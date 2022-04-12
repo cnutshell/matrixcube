@@ -142,7 +142,7 @@ func (c *RaftCluster) GetReplicationConfig() *config.ReplicationConfig {
 }
 
 // InitCluster initializes the raft cluster.
-func (c *RaftCluster) InitCluster(opt *config.PersistOptions, storage storage.Storage, basicCluster *core.BasicCluster) {
+func (c *RaftCluster) InitClusterLocked(opt *config.PersistOptions, storage storage.Storage, basicCluster *core.BasicCluster) {
 	basicCluster.Reset()
 	c.core = basicCluster
 	c.opt = opt
@@ -167,7 +167,7 @@ func (c *RaftCluster) Start(s Server) error {
 		return nil
 	}
 
-	c.InitCluster(s.GetPersistOptions(), s.GetStorage(), s.GetBasicCluster())
+	c.InitClusterLocked(s.GetPersistOptions(), s.GetStorage(), s.GetBasicCluster())
 	cluster, err := c.LoadClusterInfo()
 	if err != nil {
 		return err
@@ -254,9 +254,8 @@ func (c *RaftCluster) runBackgroundJobs(interval time.Duration) {
 			c.logger.Info("metrics are reset")
 			c.resetMetrics()
 			c.Lock()
-			close(c.createShardC)
-			close(c.changedEvents)
 			c.createShardC = nil
+			close(c.changedEvents)
 			c.changedEvents = nil
 			c.Unlock()
 			c.logger.Info("background jobs has been stopped")

@@ -28,7 +28,7 @@ var (
 	// ErrReq invalid request
 	ErrReq = errors.New("invalid req")
 	// ErrStaleShard  stale resource
-	ErrStaleShard = errors.New("stale resource")
+	ErrStaleShard = errors.New("stale shard")
 	// ErrTombstoneStore t ombstone container
 	ErrTombstoneStore = errors.New("container is tombstone")
 
@@ -43,6 +43,12 @@ var (
 	ErrJobProcessorStopped  = errors.New("job processor stopped")
 	ErrJobInvalidCommand    = errors.New("invalid job command")
 	ErrJobNotFound          = errors.New("job not found")
+
+	// ErrBatchSizeExceeded notifies that the maximum batch size was exceeded
+	ErrBatchSizeExceeded = errors.New("batch size exceeded")
+	ErrShardNotFound     = errors.New("shard not found in prophet")
+	ErrInvalidShardEpoch = errors.New("invalid shard epoch")
+	ErrInvalidRequest    = errors.New("invalid request")
 )
 
 // IsNotLeaderError is not leader error
