@@ -472,8 +472,10 @@ func (c *RaftCluster) triggerNotifyCreateShards() {
 	}
 }
 
+// doNotifyCreateShards should be invoked under lock.
 func (c *RaftCluster) doNotifyCreateShards() {
 	c.core.ForeachWaitingCreateShards(func(res metapb.Shard) {
+		// under lock
 		c.addNotifyLocked(event.NewShardEvent(res, 0, false, true))
 	})
 }

@@ -264,9 +264,13 @@ func (c *RaftCluster) runBackgroundJobs(interval time.Duration) {
 			c.checkStores()
 			c.collectMetrics()
 			c.coordinator.opController.PruneHistory()
+			c.Lock()
 			c.doNotifyCreateShards()
+			c.Unlock()
 		case <-c.createShardC:
+			c.Lock()
 			c.doNotifyCreateShards()
+			c.Unlock()
 		}
 	}
 }
