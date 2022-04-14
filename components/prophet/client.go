@@ -45,9 +45,9 @@ var (
 type Client interface {
 	Close() error
 	AllocID() (uint64, error)
-	CreateDestroying(id uint64, index uint64, removeData bool, replicas []uint64) (metapb.ShardState, error)
-	ReportDestroyed(id uint64, replicaID uint64) (metapb.ShardState, error)
-	GetDestroying(id uint64) (*metapb.DestroyingStatus, error)
+	CreateDestroying(shardID uint64, index uint64, removeData bool, replicas []uint64) (metapb.ShardState, error)
+	ReportDestroyed(shardID uint64, replicaID uint64) (metapb.ShardState, error)
+	GetDestroying(shardID uint64) (*metapb.DestroyingStatus, error)
 	PutStore(container metapb.Store) error
 	GetStore(containerID uint64) (*metapb.Store, error)
 	ShardHeartbeat(meta metapb.Shard, hb rpcpb.ShardHeartbeatReq) error
@@ -221,14 +221,14 @@ func (c *asyncClient) StoreHeartbeat(hb rpcpb.StoreHeartbeatReq) (rpcpb.StoreHea
 	return resp.StoreHeartbeat, nil
 }
 
-func (c *asyncClient) CreateDestroying(id uint64, index uint64, removeData bool, replicas []uint64) (metapb.ShardState, error) {
+func (c *asyncClient) CreateDestroying(shardID uint64, index uint64, removeData bool, replicas []uint64) (metapb.ShardState, error) {
 	if !c.running() {
 		return metapb.ShardState_Destroying, ErrClosed
 	}
 
 	req := &rpcpb.ProphetRequest{}
 	req.Type = rpcpb.TypeCreateDestroyingReq
-	req.CreateDestroying.ID = id
+	req.CreateDestroying.ID = shardID
 	req.CreateDestroying.Index = index
 	req.CreateDestroying.Replicas = replicas
 	req.CreateDestroying.RemoveData = removeData
@@ -240,14 +240,14 @@ func (c *asyncClient) CreateDestroying(id uint64, index uint64, removeData bool,
 	return rsp.CreateDestroying.State, nil
 }
 
-func (c *asyncClient) GetDestroying(id uint64) (*metapb.DestroyingStatus, error) {
+func (c *asyncClient) GetDestroying(shardID uint64) (*metapb.DestroyingStatus, error) {
 	if !c.running() {
 		return nil, ErrClosed
 	}
 
 	req := &rpcpb.ProphetRequest{}
 	req.Type = rpcpb.TypeGetDestroyingReq
-	req.GetDestroying.ID = id
+	req.GetDestroying.ID = shardID
 
 	rsp, err := c.syncDo(req)
 	if err != nil {
@@ -257,14 +257,14 @@ func (c *asyncClient) GetDestroying(id uint64) (*metapb.DestroyingStatus, error)
 	return rsp.GetDestroying.Status, nil
 }
 
-func (c *asyncClient) ReportDestroyed(id uint64, replicaID uint64) (metapb.ShardState, error) {
+func (c *asyncClient) ReportDestroyed(shardID uint64, replicaID uint64) (metapb.ShardState, error) {
 	if !c.running() {
 		return metapb.ShardState_Destroying, ErrClosed
 	}
 
 	req := &rpcpb.ProphetRequest{}
 	req.Type = rpcpb.TypeReportDestroyedReq
-	req.ReportDestroyed.ID = id
+	req.ReportDestroyed.ID = shardID
 	req.ReportDestroyed.ReplicaID = replicaID
 
 	rsp, err := c.syncDo(req)
