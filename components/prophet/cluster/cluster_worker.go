@@ -181,6 +181,12 @@ func (c *RaftCluster) HandleAskBatchSplit(request *rpcpb.ProphetRequest) (*rpcpb
 		return nil, err
 	}
 
+	// NOTE: RaftCluster should be running for the entire invocation.
+	// But here we only check it once.
+	if !c.IsRunning() {
+		return nil, util.ErrNotLeader
+	}
+
 	splitCount := request.AskBatchSplit.Count
 	err = c.ValidRequestShard(reqShard)
 	if err != nil {
