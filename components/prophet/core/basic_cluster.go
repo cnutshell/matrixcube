@@ -64,6 +64,9 @@ func (bc *BasicCluster) Reset() {
 	bc.DestroyedShards = roaring64.NewBitmap()
 	bc.WaitingCreateShards = make(map[uint64]metapb.Shard)
 	bc.ScheduleGroupRules.Clear()
+
+	// Clear DestroyingStatus or it may run into old status when leader comes back.
+	bc.DestroyingStatuses = make(map[uint64]*metapb.DestroyingStatus)
 }
 
 // AddRemovedShards add removed shards
